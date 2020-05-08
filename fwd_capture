@@ -1,0 +1,104 @@
+#include <iostream>
+#include <functional>
+#include <tuple>
+#include <tuple>
+
+#define FWD(...) std::forward<decltype(__VA_ARGS__)>(__VA_ARGS__)
+
+namespace impl
+{
+template <typename... Ts>
+auto fwd_capture(Ts&&... xs)
+{
+	return std::tuple<Ts...>(FWD(xs)...);
+}
+}
+
+template <typename T>
+decltype(auto) access_tuple_val(T&& x) { return std::get<0>(FWD(x)); }
+
+#define FWD_CAPTURE(...) impl::fwd_capture(FWD(__VA_ARGS__))
+
+namespace impl
+{
+template <typename... Ts>
+auto fwd_capture_as_tuple(Ts&&... xs)
+{
+	return std::make_tuple(FWD_CAPTURE(xs)...);
+}
+}
+
+#define FWD_CAPTURE_PACK(...) impl::fwd_capture_as_tuple(FWD(__VA_ARGS__)...)
+
+// Expand all elements of `fc` into a `func(...)` invocation.
+template <typename TF, typename TFwdCapture>
+auto apply_fwd_capture_pack(TF&& func, TFwdCapture&& fc) -> decltype(auto)
+{
+	return std::apply(
+		[&func](auto&&... xs) -> decltype(auto)
+		{
+			return func(access_tuple_val(FWD(xs))...);
+		}, FWD(fc));
+}
+
+// Execute `func` on every element of `fc`.
+template <typename TF, typename TFwdCapture>
+void for_fwd_capture_tuple(TF&& func, TFwdCapture&& fc)
+{
+	apply_fwd_capture_pack(
+		[&func](auto&&... xs) { (func(FWD(xs)), ...); },
+		FWD(fc)
+	);
+}
+
+struct A
+{
+	int m_value{0};
+};
+
+auto foo = [](auto&&... xs) mutable
+{
+	return[xs_pack = FWD_CAPTURE_PACK(xs)]() mutable
+	{
+		for_fwd_capture_tuple([](auto&& a)
+		{
+			++a.m_value;
+			std::cout << a.m_value << "\n";
+		}, xs_pack);
+	};
+};
+
+int main()
+{
+	{
+		auto l_inner = foo(A{});
+		l_inner(); // Prints `1`.
+		l_inner(); // Prints `2`.
+		l_inner(); // Prints `3`.
+	}
+
+	std::cout << "\n";
+
+	{
+		A my_a;
+		auto l_inner = foo(my_a);
+		l_inner(); // Prints `1`.
+		l_inner(); // Prints `2`.
+		l_inner(); // Prints `3`.
+
+				   // Prints '3', yay!
+		std::cout << my_a.m_value << "\n";
+	}
+
+	std::cout << "\n";
+
+	{
+		A my_a;
+		auto l_inner = foo(my_a, A{});
+		l_inner(); // Prints `1`, `1`.
+		l_inner(); // Prints `2`, `2`.
+
+				   // Prints `2`, yay!
+		std::cout << my_a.m_value << "\n";
+	}
+}
